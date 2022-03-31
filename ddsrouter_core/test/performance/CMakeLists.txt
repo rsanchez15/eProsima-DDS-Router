@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Include custom test cmake functions
-include(${PROJECT_SOURCE_DIR}/cmake/test/cmake_test_utils.cmake)
-# Set test requirements
-test_requirements()
+find_package(Threads REQUIRED)
 
-# Add subdirectory with tests
-add_subdirectory(unittest)
-add_subdirectory(blackbox)
-add_subdirectory(performance)
+if(WIN32)
+    if("${CMAKE_SYSTEM_NAME}" STREQUAL "WindowsStore")
+        add_definitions(-D_WIN32_WINNT=0x0603)
+    else()
+        add_definitions(-D_WIN32_WINNT=0x0601)
+    endif()
+endif()
+
+add_subdirectory(latency)
