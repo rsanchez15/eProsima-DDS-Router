@@ -47,7 +47,7 @@ public:
             bool echo,
             int samples,
             bool reliable,
-            uint32_t pid,
+            uint32_t seed,
             bool hostname,
             const std::string& xml_config_file,
             Arg::EnablerValue shared_memory,
@@ -117,9 +117,9 @@ private:
     bool echo_ = true;
     int samples_ = 0;
     Arg::EnablerValue shared_memory_ = Arg::EnablerValue::NO_SET;
-    int forced_domain_ = -1;
+    int domain_ = -1;
     bool hostname_ = false;
-    uint32_t pid_ = 0;
+    uint32_t seed_ = 0;
 
     /* Topics */
     eprosima::fastdds::dds::Topic* latency_data_sub_topic_ = nullptr;

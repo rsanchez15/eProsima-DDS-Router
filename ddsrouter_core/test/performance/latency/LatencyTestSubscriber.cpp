@@ -81,11 +81,11 @@ bool LatencyTestSubscriber::init(
         bool echo,
         int samples,
         bool reliable,
-        uint32_t pid,
+        uint32_t seed,
         bool hostname,
         const std::string& xml_config_file,
         Arg::EnablerValue shared_memory,
-        int forced_domain,
+        int domain,
         LatencyDataSizes& latency_data_sizes)
 {
     // Initialize state
@@ -93,18 +93,21 @@ bool LatencyTestSubscriber::init(
     echo_ = echo;
     samples_ = samples;
     shared_memory_ = shared_memory;
-    forced_domain_ = forced_domain;
-    pid_ = pid;
+    domain_= domain;
+    seed_ = seed;
     hostname_ = hostname;
+
+    if (domain_ < 0)
+    {
+        logError(LatencyTest_Subscriber, "Invalid Subscriber domain.");
+        return false;
+    }
 
     data_size_sub_ = latency_data_sizes.sample_sizes();
 
     /* Create DomainParticipant*/
     std::string participant_profile_name = "sub_participant_profile";
     DomainParticipantQos pqos;
-
-    // Default domain
-    DomainId_t domainId = pid % 230;
 
     // Default participant name
     pqos.name("latency_test_subscriber");
@@ -120,12 +123,6 @@ bool LatencyTestSubscriber::init(
         {
             return false;
         }
-    }
-
-    // Apply user's force domain
-    if (forced_domain_ >= 0)
-    {
-        domainId = forced_domain_;
     }
 
     // Set shared memory transport if it was enable/disable explicitly.
@@ -148,7 +145,7 @@ bool LatencyTestSubscriber::init(
     }
 
     // Create the participant
-    participant_ = DomainParticipantFactory::get_instance()->create_participant(domainId, pqos);
+    participant_ = DomainParticipantFactory::get_instance()->create_participant(domain_, pqos);
     if (participant_ == nullptr)
     {
         return false;
@@ -234,7 +231,7 @@ bool LatencyTestSubscriber::init(
         {
             topic_name << asio::ip::host_name() << "_";
         }
-        topic_name << pid << "_PUB2SUB";
+        topic_name << seed << "_PUB2SUB";
 
         latency_command_sub_topic_ = participant_->create_topic(
             topic_name.str(),
@@ -254,7 +251,7 @@ bool LatencyTestSubscriber::init(
         {
             topic_name << asio::ip::host_name() << "_";
         }
-        topic_name << pid << "_SUB2PUB";
+        topic_name << seed << "_SUB2PUB";
 
         latency_command_pub_topic_ = participant_->create_topic(
             topic_name.str(),
@@ -406,8 +403,8 @@ void LatencyTestSubscriber::CommandReaderListener::on_data_available(
     {
         std::unique_lock<std::mutex> lock(latency_subscriber_->mutex_);
 
-        log << "RCOMMAND: " << command.m_command;
-        switch ( command.m_command )
+        log << "RECEIVED COMMAND: " << command.to_string() << " - ";
+        switch ( command.command_ )
         {
             case READY:
                 log << "Publisher has new test ready...";
@@ -424,7 +421,7 @@ void LatencyTestSubscriber::CommandReaderListener::on_data_available(
                 break;
         }
 
-        if (command.m_command != DEFAULT)
+        if (command.command_ != DEFAULT)
         {
             ++latency_subscriber_->command_msg_count_;
             notify = true;
@@ -536,7 +533,7 @@ bool LatencyTestSubscriber::test(
     test_status_ = 0;
     received_ = 0;
     TestCommandType command;
-    command.m_command = BEGIN;
+    command.command_ = BEGIN;
     if (!command_writer_->write(&command))
     {
         logError(LatencyTest, "Subscriber fail to publish the BEGIN command")
@@ -569,7 +566,7 @@ bool LatencyTestSubscriber::test(
         return false;
     }
 
-    command.m_command = END;
+    command.command_ = END;
     if (!command_writer_->write(&command))
     {
         logError(LatencyTest, "Subscriber fail to publish the END command")
@@ -662,7 +659,7 @@ bool LatencyTestSubscriber::create_data_endpoints()
     {
         topic_name << asio::ip::host_name() << "_";
     }
-    topic_name << pid_ << "_PUB2SUB";
+    topic_name << seed_ << "_PUB2SUB";
 
     latency_data_sub_topic_ = participant_->create_topic(
         topic_name.str(),
@@ -684,7 +681,7 @@ bool LatencyTestSubscriber::create_data_endpoints()
     {
         topic_name << asio::ip::host_name() << "_";
     }
-    topic_name << pid_ << "_SUB2PUB";
+    topic_name << seed_ << "_SUB2PUB";
 
     latency_data_pub_topic_ = participant_->create_topic(
         topic_name.str(),

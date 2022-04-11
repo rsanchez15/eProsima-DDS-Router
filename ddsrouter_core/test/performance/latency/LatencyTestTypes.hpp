@@ -140,11 +140,13 @@ public:
         return true;
     }
 
+    static const std::string type_name();
+
     // Name
     static const std::string type_name_;
 };
 
-enum TESTCOMMAND : uint32_t
+enum TestCommand : uint32_t
 {
     DEFAULT,
     READY,
@@ -156,17 +158,39 @@ enum TESTCOMMAND : uint32_t
 
 typedef struct TestCommandType
 {
-    TESTCOMMAND m_command;
     TestCommandType()
     {
-        m_command = DEFAULT;
+        command_ = TestCommand::DEFAULT;
     }
 
     TestCommandType(
-            TESTCOMMAND com)
-        : m_command(com)
+            TestCommand command)
+        : command_(command)
     {
     }
+
+    const std::string to_string()
+    {
+        switch (command_)
+        {
+            case TestCommand::DEFAULT:
+                return "DEFAULT";
+            case TestCommand::READY:
+                return "READY";
+            case TestCommand::BEGIN:
+                return "BEGIN";
+            case TestCommand::STOP:
+                return "STOP";
+            case TestCommand::END:
+                return "END";
+            case TestCommand::STOP_ERROR:
+                return "STOP_ERROR";
+            default:
+                return "DEFAULT";
+        }
+    }
+
+    TestCommand command_;
 
 }TestCommandType;
 
@@ -205,6 +229,11 @@ public:
         return false;
     }
 
+    static const std::string type_name();
+
+private:
+
+    static const std::string type_name_;
 };
 
 

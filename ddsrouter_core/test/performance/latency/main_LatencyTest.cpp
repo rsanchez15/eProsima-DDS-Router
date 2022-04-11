@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "LatencyTestDDSRouter.hpp"
 #include "LatencyTestPublisher.hpp"
 #include "LatencyTestSubscriber.hpp"
 #include "../optionarg.hpp"
@@ -23,7 +24,7 @@
 #include <bitset>
 #include <cstdint>
 #include <fstream>
-
+#include <regex>
 
 #include <fastdds/dds/log/Colors.hpp>
 #include <fastrtps/Domain.h>
@@ -32,6 +33,7 @@
 
 #include <ddsrouter_utils/utils.hpp>
 #include <ddsrouter_utils/Log.hpp>
+#include <ddsrouter_core/types/dds/DomainId.hpp>
 
 
 #if defined(_MSC_VER)
@@ -62,27 +64,27 @@ enum  optionIndex
     EXPORT_CSV,
     EXPORT_RAW_DATA,
     EXPORT_PREFIX,
-    USE_SECURITY,
     CERTS_PATH,
     XML_FILE,
-    DYNAMIC_TYPES,
-    FORCED_DOMAIN,
+    PUB_DOMAIN,
+    SUB_DOMAIN,
     FILE_R,
-    DATA_SHARING,
-    DATA_LOAN,
-    SHARED_MEMORY
+    SHARED_MEMORY,
+    DDSROUTER_DOMAINS
 };
 
 enum TestAgent
 {
     PUBLISHER,
     SUBSCRIBER,
-    BOTH
+    DDSROUTER,
+    PUBSUB,
+    ALL
 };
 
 const option::Descriptor usage[] = {
     { UNKNOWN_OPT,     0, "",  "",                Arg::None,
-      "Usage: LatencyTest <publisher|subscriber|both>\n\nGeneral options:" },
+      "Usage: LatencyTest <publisher|subscriber|ddsrouter|all>\n\nGeneral options:" },
     { HELP,            0, "h", "help",            Arg::None,
       "  -h           --help                    Produce help message." },
     { RELIABILITY,     0, "r", "reliability",     Arg::Required,
@@ -95,13 +97,15 @@ const option::Descriptor usage[] = {
       "               --hostname                Append hostname to the topic." },
     { XML_FILE,        0, "",  "xml",             Arg::String,
       "               --xml                     XML Configuration file." },
-    { FORCED_DOMAIN,   0, "",  "domain",          Arg::Numeric,
-      "               --domain                  DDS Domain." },
+    { PUB_DOMAIN,   0, "",  "pub_domain",          Arg::Numeric,
+      "               --pub_domain                  Publisher DDS Domain." },
+    { SUB_DOMAIN,   0, "",  "sub_domain",          Arg::Numeric,
+      "               --sub_domain                  Subscriber DDS Domain." },
     { FILE_R,          0, "f", "file",            Arg::Required,
       "  -f <arg>,    --file=<arg>              Path to the payload demands file." },
     { SHARED_MEMORY,   0, "", "shared_memory",    Arg::Enabler,
       "               --shared_memory [on|off]  Explicitly enable/disable shared memory transport." },
-    { UNKNOWN_OPT,     0, "",  "",                Arg::None,     "\nPublisher/Both options:" },
+    { UNKNOWN_OPT,     0, "",  "",                Arg::None,     "\nPublisher/PubSub options:" },
     { SUBSCRIBERS,     0, "n", "subscribers",     Arg::Numeric,
       "  -n <num>,    --subscribers=<arg>       Number of subscribers." },
     { EXPORT_CSV,      0, "",  "export_csv",      Arg::None,
@@ -113,6 +117,9 @@ const option::Descriptor usage[] = {
     { UNKNOWN_OPT,     0, "",  "",                Arg::None,     "\nSubscriber options:"},
     { ECHO_OPT,        0, "e", "echo",            Arg::Required,
       "  -e <arg>,    --echo <arg>              Echo mode (\"true\"/\"false\")." },
+    { UNKNOWN_OPT,     0, "",  "",                Arg::None,     "\nDDSRouter/All options:"},
+    { DDSROUTER_DOMAINS, 0, "", "ddsrouter_domains", Arg::String,
+      "               --ddsrouter_domains <DomainId,DomainId>      DDS Router Participant Domains." },
     { 0, 0, 0, 0, 0, 0 }
 };
 
@@ -179,6 +186,7 @@ int main(
 {
 
     utils::Log::SetVerbosity(utils::Log::Kind::Info);
+    // utils::Log::SetCategoryFilter(std::regex("LatencyTest|DDSROUTER"));
     utils::Log::SetCategoryFilter(std::regex("LatencyTest"));
 
     int columns;
@@ -210,9 +218,14 @@ int main(
     std::string export_prefix = "";
     std::string raw_data_file = "";
     std::string xml_config_file = "";
-    int forced_domain = -1;
+    int publisher_domain = 0;
+    int subscriber_domain = 1;
     std::string demands_file = "";
     Arg::EnablerValue shared_memory = Arg::EnablerValue::NO_SET;
+    auto ddsrouter_domains =
+            std::make_tuple<core::types::DomainId, core::types::DomainId>(0u, 1u);
+    std::regex domains_regex("^[0-9][0-9]*,[0-9][0-9]*$",
+            std::regex_constants::ECMAScript | std::regex_constants::icase);
 
     argc -= (argc > 0);
     argv += (argc > 0); // skip program name argv[0] if present
@@ -226,9 +239,17 @@ int main(
         {
             test_agent = TestAgent::SUBSCRIBER;
         }
-        else if (strcmp(argv[0], "both") == 0)
+        else if (strcmp(argv[0], "ddsrouter") == 0)
         {
-            test_agent = TestAgent::BOTH;
+            test_agent = TestAgent::DDSROUTER;
+        }
+        else if (strcmp(argv[0], "pubsub") == 0)
+        {
+            test_agent = TestAgent::PUBSUB;
+        }
+        else if (strcmp(argv[0], "all") == 0)
+        {
+            test_agent = TestAgent::ALL;
         }
         else
         {
@@ -337,8 +358,11 @@ int main(
                     return 0;
                 }
                 break;
-            case FORCED_DOMAIN:
-                forced_domain = strtol(opt.arg, nullptr, 10);
+            case PUB_DOMAIN:
+                publisher_domain = strtol(opt.arg, nullptr, 10);
+                break;
+            case SUB_DOMAIN:
+                subscriber_domain = strtol(opt.arg, nullptr, 10);
                 break;
             case FILE_R:
                 demands_file = opt.arg;
@@ -351,6 +375,28 @@ int main(
                 else
                 {
                     shared_memory = Arg::EnablerValue::OFF;
+                }
+                break;
+            case DDSROUTER_DOMAINS:
+                if (std::regex_search(opt.arg, domains_regex))
+                {
+                    std::stringstream ss(opt.arg);
+                    int i;
+                    ss >> i;
+                    std::get<0>(ddsrouter_domains) = eprosima::ddsrouter::core::types::DomainId(
+                            static_cast<DomainIdType>(i));
+                    if (ss.peek() == ',')
+                    {
+                        ss.ignore();
+                    }
+                    ss >> i;
+                    std::get<1>(ddsrouter_domains) = eprosima::ddsrouter::core::types::DomainId(
+                            static_cast<DomainIdType>(i));
+                }
+                else
+                {
+                    option::printUsage(fwrite, stdout, usage, columns);
+                    return 0;
                 }
                 break;
             case UNKNOWN_OPT:
@@ -382,7 +428,7 @@ int main(
                   << std::endl;
         LatencyTestPublisher latency_publisher;
         if (latency_publisher.init(subscribers, samples, reliable, seed, hostname, export_csv, export_prefix,
-                raw_data_file, xml_config_file, shared_memory, forced_domain, data_sizes))
+                raw_data_file, xml_config_file, shared_memory, publisher_domain, data_sizes))
         {
             latency_publisher.run();
         }
@@ -390,13 +436,12 @@ int main(
         {
             return_code = 1;
         }
-
     }
     else if (test_agent == TestAgent::SUBSCRIBER)
     {
         LatencyTestSubscriber latency_subscriber;
         if (latency_subscriber.init(echo, samples, reliable, seed, hostname, xml_config_file, shared_memory,
-                forced_domain, data_sizes))
+                subscriber_domain, data_sizes))
         {
             latency_subscriber.run();
         }
@@ -406,15 +451,27 @@ int main(
         }
 
     }
-    else if (test_agent == TestAgent::BOTH)
+    else if (test_agent == TestAgent::DDSROUTER)
     {
-        std::cout << "Performing intraprocess test with " << subscribers << " subscribers and " << samples <<
+        LatencyTestDDSRouter latency_ddsrouter(reliable, seed, hostname, ddsrouter_domains);
+        if (latency_ddsrouter.init())
+        {
+            latency_ddsrouter.run();
+        }
+        else
+        {
+            return_code = 1;
+        }
+    }
+    else if (test_agent == TestAgent::PUBSUB || test_agent == TestAgent::ALL)
+    {
+        std::cout << "Performing test with " << subscribers << " subscribers and " << samples <<
             " samples" << std::endl;
 
         // Initialize publisher
         LatencyTestPublisher latency_publisher;
         bool pub_init = latency_publisher.init(subscribers, samples, reliable, seed, hostname, export_csv,
-                        export_prefix, raw_data_file, xml_config_file, shared_memory, forced_domain, data_sizes);
+                        export_prefix, raw_data_file, xml_config_file, shared_memory, publisher_domain, data_sizes);
 
         // Initialize subscribers
         std::vector<std::shared_ptr<LatencyTestSubscriber>> latency_subscribers;
@@ -424,11 +481,39 @@ int main(
         {
             latency_subscribers.push_back(std::make_shared<LatencyTestSubscriber>());
             sub_init &= latency_subscribers.back()->init(echo, samples, reliable, seed, hostname,
-                            xml_config_file, shared_memory, forced_domain, data_sizes);
+                            xml_config_file, shared_memory, subscriber_domain, data_sizes);
         }
 
-        // Spawn run threads
-        if (pub_init && sub_init)
+        bool ddsrouter_init = false;
+        LatencyTestDDSRouter latency_ddsrouter(reliable, seed, hostname, ddsrouter_domains);
+        if (test_agent == TestAgent::ALL)
+        {
+            ddsrouter_init = latency_ddsrouter.init();
+        }
+
+
+        if ((test_agent == TestAgent::ALL) && ddsrouter_init && pub_init && sub_init)
+        {
+            std::thread pub_thread(&LatencyTestPublisher::run, &latency_publisher);
+
+            std::vector<std::thread> sub_threads;
+            for (auto& sub : latency_subscribers)
+            {
+                sub_threads.emplace_back(&LatencyTestSubscriber::run, sub.get());
+            }
+
+            std::thread ddsrouter_thread(&LatencyTestDDSRouter::run, &latency_ddsrouter);
+
+            pub_thread.join();
+
+            for (auto& sub : sub_threads)
+            {
+                sub.join();
+            }
+
+            ddsrouter_thread.join();
+        }
+        else if ((test_agent == TestAgent::PUBSUB) && pub_init && sub_init)
         {
             std::thread pub_thread(&LatencyTestPublisher::run, &latency_publisher);
 

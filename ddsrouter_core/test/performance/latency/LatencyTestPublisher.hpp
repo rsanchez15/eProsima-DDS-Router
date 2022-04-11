@@ -32,8 +32,8 @@
 #include <fastdds/dds/topic/TypeSupport.hpp>
 #include <fastrtps/types/MemberDescriptor.h>
 #include <fastrtps/types/TypeDescriptor.h>
-#include "LatencyTestTypes.hpp"
 
+#include "LatencyTestTypes.hpp"
 #include "../optionarg.hpp"
 
 class TimeStats
@@ -90,7 +90,7 @@ public:
             std::string raw_data_file,
             const std::string& xml_config_file,
             Arg::EnablerValue shared_memory,
-            int forced_domain,
+            int domain,
             LatencyDataSizes& latency_data_sizes);
 
     void run();
@@ -188,7 +188,7 @@ private:
     bool export_csv_ = false;
     bool reliable_ = false;
     Arg::EnablerValue shared_memory_ = Arg::EnablerValue::NO_SET;
-    int forced_domain_ = -1;
+    int domain_ = -1;
     int subscribers_ = 0;
     unsigned int samples_ = 0;
     bool hostname_ = false;

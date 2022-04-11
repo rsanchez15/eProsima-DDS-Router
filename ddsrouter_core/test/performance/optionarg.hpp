@@ -90,7 +90,7 @@ struct Arg : public option::Arg
         }
         if (msg)
         {
-            print_error("Option '", option, "' requires a numeric argument\n");
+            print_error("Option '", option, "' requires a string argument\n");
         }
         return option::ARG_ILLEGAL;
     }

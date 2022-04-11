@@ -17,6 +17,7 @@
 ###########################################################################
 set(
     LATENCYTEST_SOURCE
+    LatencyTestDDSRouter.cpp
     LatencyTestPublisher.cpp
     LatencyTestSubscriber.cpp
     LatencyTestTypes.cpp
@@ -39,6 +40,7 @@ target_link_libraries(
     fastcdr
     foonathan_memory
     fastdds::optionparser
+    ddsrouter_core
     ddsrouter_utils
     ${CMAKE_THREAD_LIBS_INIT}
     ${CMAKE_DL_LIBS}

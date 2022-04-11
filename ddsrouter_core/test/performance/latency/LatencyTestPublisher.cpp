@@ -96,7 +96,7 @@ bool LatencyTestPublisher::init(
         std::string raw_data_file,
         const std::string& xml_config_file,
         Arg::EnablerValue shared_memory,
-        int forced_domain,
+        int domain,
         LatencyDataSizes& latency_data_sizes)
 {
     // Initialize state
@@ -107,10 +107,16 @@ bool LatencyTestPublisher::init(
     export_prefix_ = export_prefix;
     reliable_ = reliable;
     shared_memory_ = shared_memory;
-    forced_domain_ = forced_domain;
+    domain_ = domain;
     raw_data_file_ = raw_data_file;
     seed_ = seed;
     hostname_ = hostname;
+
+    if (domain_ < 0)
+    {
+        logError(LatencyTest_Publisher, "Invalid Subscriber domain.");
+        return false;
+    }
 
     data_size_pub_ = latency_data_sizes.sample_sizes();
 
@@ -149,9 +155,6 @@ bool LatencyTestPublisher::init(
     std::string participant_profile_name = "pub_participant_profile";
     DomainParticipantQos pqos;
 
-    // Default domain
-    DomainId_t domainId = seed % 230;
-
     // Default participant name
     pqos.name("latency_test_publisher");
 
@@ -166,12 +169,6 @@ bool LatencyTestPublisher::init(
         {
             return false;
         }
-    }
-
-    // Apply user's force domain
-    if (forced_domain_ >= 0)
-    {
-        domainId = forced_domain_;
     }
 
     // Set shared memory transport if it was enable/disable explicitly.
@@ -194,7 +191,7 @@ bool LatencyTestPublisher::init(
     }
 
     // Create the participant
-    participant_ = DomainParticipantFactory::get_instance()->create_participant(domainId, pqos);
+    participant_ = DomainParticipantFactory::get_instance()->create_participant(domain_, pqos);
 
     if (participant_ == nullptr)
     {
@@ -460,21 +457,31 @@ void LatencyTestPublisher::CommandReaderListener::on_data_available(
 {
     TestCommandType command;
     SampleInfo info;
+    std::ostringstream log;
 
     if (reader->take_next_sample(&command, &info) == ReturnCode_t::RETCODE_OK && info.valid_data)
     {
-        if (command.m_command == BEGIN || command.m_command == END )
+        log << "RECEIVED COMMAND: " << command.to_string();
+        switch (command.command_)
         {
-            latency_publisher_->mutex_.lock();
-            ++latency_publisher_->command_msg_count_;
-            latency_publisher_->mutex_.unlock();
-            latency_publisher_->command_msg_cv_.notify_one();
+            case BEGIN:
+            case END:
+                latency_publisher_->mutex_.lock();
+                ++latency_publisher_->command_msg_count_;
+                latency_publisher_->mutex_.unlock();
+                latency_publisher_->command_msg_cv_.notify_one();
+                break;
+            default:
+                log << " - Something is wrong";
+                break;
         }
     }
     else
     {
-        logDebug(LatencyTest, "Problem reading command message");
+        log << " - Problem reading command message";
     }
+
+    logDebug(LatencyTest_Publisher, log.str());
 }
 
 void LatencyTestPublisher::LatencyDataReaderListener::on_data_available(
@@ -504,6 +511,7 @@ void LatencyTestPublisher::LatencyDataReaderListener::on_data_available(
         // Check if is the expected echo message
         if (pub->latency_data_in_->seqnum != pub->latency_data_out_->seqnum)
         {
+            // logDebug(LatencyTest_Publisher, "Publisher received data with seq num " << pub->latency_data_in_->seqnum);
             logInfo(LatencyTest, "Echo message received is not the expected one");
         }
         else
@@ -517,7 +525,7 @@ void LatencyTestPublisher::LatencyDataReaderListener::on_data_available(
 
             // Discard samples were loan failed due to payload outages
             // in that case the roundtrip will match the os scheduler quantum slice
-            if (roundtrip.count() > 0 && roundtrip.count() <= 10000)
+            if (roundtrip.count() > 0 && roundtrip.count() <= 50000)
             {
                 pub->times_.push_back(roundtrip);
                 ++pub->received_count_;
@@ -540,6 +548,7 @@ void LatencyTestPublisher::run()
 {
     for (std::vector<uint32_t>::iterator payload = data_size_pub_.begin(); payload != data_size_pub_.end(); ++payload)
     {
+        logDebug(LatencyTest_Publisher, "Testing with data size: " << *payload);
         if (!test(*payload))
         {
             break;
@@ -617,20 +626,13 @@ bool LatencyTestPublisher::test(
     // Signal the subscribers the publisher is READY
     times_.clear();
     TestCommandType command;
-    command.m_command = READY;
+    command.command_ = READY;
     if (!command_writer_->write(&command))
     {
         logError(LatencyTest, "Publisher cannot publish READY command");
         return false;
     }
-
-    // WAIT FOR THE DISCOVERY PROCESS FO FINISH:
-    // EACH SUBSCRIBER NEEDS 4 Matchings (2 publishers and 2 subscribers)
-    wait_for_discovery(
-        [this]() -> bool
-        {
-            return total_matches() == 4 * subscribers_;
-        });
+    logDebug(LatencyTest_Publisher, "SENT COMMAND: " << command.to_string());
 
     logInfo(LatencyTest, C_B_MAGENTA << "Pub: DISCOVERY COMPLETE " << C_DEF)
 
@@ -665,11 +667,13 @@ bool LatencyTestPublisher::test(
             logError(LatencyTest, "Publisher write operation failed");
             return false;
         }
+        // logDebug(LatencyTest_Publisher, "Published data with seq num " << latency_data_out_->seqnum);
+
 
         std::unique_lock<std::mutex> lock(mutex_);
         // the wait timeouts due possible message leaks
         data_msg_cv_.wait_for(lock,
-                std::chrono::milliseconds(100),
+                std::chrono::milliseconds(300),
                 [&]()
                 {
                     return data_msg_count_ >= subscribers_;
@@ -677,7 +681,7 @@ bool LatencyTestPublisher::test(
         data_msg_count_ = 0;
     }
 
-    command.m_command = STOP;
+    command.command_ = STOP;
     command_writer_->write(&command);
 
     if (test_status_ != 0)
@@ -685,6 +689,7 @@ bool LatencyTestPublisher::test(
         logError(LatencyTest, "Error in test");
         return false;
     }
+    logDebug(LatencyTest_Publisher, "SENT COMMAND: " << command.to_string());
 
     // Wait for Subscriber's END command
     // Assures that LatencyTestSubscriber|Publisher data endpoints creation and
@@ -707,6 +712,7 @@ bool LatencyTestPublisher::test(
     }
 
     // Drop the first measurement, as it's usually not representative
+    logDebug(LatencyTest_Publisher, "Times size: " << times_.size());
     times_.erase(times_.begin());
 
     // Log all data to CSV file if specified

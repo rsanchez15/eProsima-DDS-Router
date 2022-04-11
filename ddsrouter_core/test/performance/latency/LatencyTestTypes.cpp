@@ -108,12 +108,19 @@ void LatencyDataType::deleteData(
     delete[] (uint8_t*)(data);
 }
 
+const std::string LatencyDataType::type_name()
+{
+    return type_name_;
+}
+
+const std::string TestCommandDataType::type_name_ = "TestCommandType";
+
 bool TestCommandDataType::serialize(
         void* data,
         SerializedPayload_t* payload)
 {
     TestCommandType* t = (TestCommandType*)data;
-    memcpy(payload->data, &t->m_command, sizeof(t->m_command));
+    memcpy(payload->data, &t->command_, sizeof(t->command_));
     payload->length = 4;
     return true;
 }
@@ -125,8 +132,8 @@ bool TestCommandDataType::deserialize(
     TestCommandType* t = (TestCommandType*)data;
     //	cout << "PAYLOAD LENGTH: "<<payload->length << endl;
     //	cout << "PAYLOAD FIRST BYTE: "<< (int)payload->data[0] << endl;
-    memcpy(&t->m_command, payload->data, sizeof(payload->length));
-    //	cout << "COMMAND: "<<t->m_command<< endl;
+    memcpy(&t->command_, payload->data, sizeof(payload->length));
+    //	cout << "COMMAND: "<<t->command<< endl;
     return true;
 }
 
@@ -154,4 +161,9 @@ void TestCommandDataType::deleteData(
 {
 
     delete((TestCommandType*)data);
+}
+
+const std::string TestCommandDataType::type_name()
+{
+    return type_name_;
 }
