@@ -1,0 +1,33 @@
+name: Build foonathan-memory-vendor, Fast CDR and Fast DDS
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+
+  ubuntu-build:
+    runs-on: ubuntu-latest
+    environment:
+      name: codecov
+
+    steps:
+      - name: Install apt packages
+        uses: ./src/DDS-Router/.github/actions/install-apt-packages
+
+      - name: Install Python packages
+        uses: ./src/DDS-Router/.github/actions/install-python-packages
+
+      - name: Fetch Fast DDS repositories
+        uses: ./src/DDS-Router/.github/actions/fetch-fastdds-repos
+
+      - name: Build workspace
+        run: |
+          colcon build --event-handlers=console_direct+
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: ubuntu_fastdds_install
+          path: install
